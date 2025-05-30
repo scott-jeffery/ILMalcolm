@@ -26,6 +26,14 @@ from sensorcommon import (
     test_connection,
 )
 from malcolm_utils import run_subprocess, remove_prefix, aggressive_url_encode, isipaddress, check_socket
+import logging
+
+# Configure logging
+logging.basicConfig(
+    filename='/tmp/configure-capture.log',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 
 
 class Constants:
@@ -135,6 +143,9 @@ class Constants:
     MSG_CONFIG_MODE_AUTOSTART = 'Configure Autostart Services'
     MSG_CONFIG_GENERIC = 'Configure {}'
     MSG_CONFIG_ARKIME = (f'{ARKIMECAP}', f'Configure Arkime session forwarding via {ARKIMECAP}')
+    MSG_CONFIG_ARKIME_WISE_SERVICE_ENABLED = 'Should the Arkime capture process get data from a WISE service?'
+    MSG_CONFIG_ARKIME_WISE_SERVICE_URL = 'Specify Arkime WISE service URL'
+
     MSG_CONFIG_ARKIME_COMPRESSION = 'Specify Arkime PCAP compression mode'
     MSG_CONFIG_ARKIME_COMPRESSION_LEVEL = 'Specify Arkime PCAP {} compression level'
     MSG_CONFIG_FILEBEAT = (f'{FILEBEAT}', f'Configure Zeek and Suricata log forwarding via {FILEBEAT}')
@@ -928,6 +939,26 @@ def main():
 
                     if arkime_password:
                         arkime_config_dict[Constants.ARKIME_PASSWORD_SECRET] = arkime_password
+                    
+                    # arkime WISE service settings
+                    code = d.yesno(
+                        Constants.MSG_CONFIG_ARKIME_WISE_SERVICE_ENABLED,
+                        yes_label="No",
+                        no_label="Yes"
+                    )
+                    if code != Dialog.OK:
+                        arkime_wise_service_enabled = "true"
+
+                    default_wise_url = previous_config_values[Constants.BEAT_OS_HOST] + "/wiseService"
+                    if arkime_wise_service_enabled:
+                        code, wise_url = d.inputbox(
+                            Constants.MSG_CONFIG_ARKIME_WISE_SERVICE_URL,
+                            init=default_wise_url
+                        )
+                        if code == Dialog.CANCEL or code == Dialog.ESC:
+                            raise CancelledError
+                        arkime_config_dict["ARKIME_WISE_PLUGIN"] = arkime_wise_service_enabled
+                        arkime_config_dict["ARKIME_WISE_URL"] = "https://" + arkime_config_dict["OS_USERNAME"]  + ":" + arkime_config_dict["OS_PASSWORD"] + "@" + wise_url
 
                     # arkime PCAP compression settings
                     code, compression_type = d.radiolist(
@@ -989,6 +1020,7 @@ def main():
                         raise CancelledError
 
                     previous_config_values = opensearch_config_dict.copy()
+
 
                     # modify specified values in-place in SENSOR_CAPTURE_CONFIG file
                     rewrite_dict_to_file(arkime_config_dict, Constants.SENSOR_CAPTURE_CONFIG)

@@ -25,6 +25,13 @@ CAPTURE_INTERFACE=${PCAP_IFACE:-}
 LIVE_CAPTURE=${ARKIME_LIVE_CAPTURE:-false}
 VIEWER_PORT=${ARKIME_VIEWER_PORT:-8005}
 NODE_NAME=${PCAP_NODE_NAME:-malcolm}
+ARKIME_EXPOSE_WISE_GUI=${ARKIME_EXPOSE_WISE_GUI-"false"}
+ARKIME_ALLOW_WISE_GUI_CONFIG=${ARKIME_ALLOW_WISE_GUI_CONFIG-"false"}
+ARKIME_WISE_CONFIG_PIN_CODE=${ARKIME_WISE_CONFIG_PIN_CODE-"WISE2019"}
+ARKIME_WISE_EXAMPLE_FILE="${ARKIME_DIR}"/etc/wise.ini.example
+ARKIME_WISE_CONFIG_FILE="${ARKIME_DIR}"/wiseini/wise.ini
+ARKIME_WISE_SERVICE_SCRIPT=/usr/local/bin/wise_service.sh
+
 
 MALCOLM_PROFILE=${MALCOLM_PROFILE:-"malcolm"}
 OPENSEARCH_URL_FINAL=${OPENSEARCH_URL:-"http://opensearch:9200"}
@@ -59,7 +66,7 @@ if ( [[ "$OPENSEARCH_PRIMARY" == "opensearch-remote" ]] || [[ "$OPENSEARCH_PRIMA
     OPENSEARCH_URL_FINAL="${PROTOCOL}${NEW_USER}:${NEW_PASSWORD}@${HOSTPORT}"
 fi
 
-# iff config.ini does not exist but config.orig.ini does, use it as a basis and modify based on env. vars
+# if config.ini does not exist but config.orig.ini does, use it as a basis and modify based on env. vars
 if [[ ! -f "${ARKIME_CONFIG_FILE}" ]] && [[ -r "${ARKIME_DIR}"/etc/config.orig.ini ]]; then
     cp "${ARKIME_DIR}"/etc/config.orig.ini "${ARKIME_CONFIG_FILE}"
 
@@ -170,8 +177,8 @@ if [[ ! -f "${ARKIME_CONFIG_FILE}" ]] && [[ -r "${ARKIME_DIR}"/etc/config.orig.i
       sed -r -i "s|(luaFiles)\s*=\s*.*|\1=$LUA_FILES|" "${ARKIME_CONFIG_FILE}"
     fi
 
-    # comment-out features that are unused in hedgehog run profile mode and in live-capture mode
     if [[ "$MALCOLM_PROFILE" == "hedgehog" ]] || [[ "$LIVE_CAPTURE" == "true" ]]; then
+      # comment-out features that are unused in hedgehog run profile mode and in live-capture mode
         sed -i "s/^\(userNameHeader=\)/# \1/" "${ARKIME_CONFIG_FILE}"
         sed -i "s/^\(userAuthIps=\)/# \1/" "${ARKIME_CONFIG_FILE}"
         sed -i "s/^\(userAutoCreateTmpl=\)/# \1/" "${ARKIME_CONFIG_FILE}"
@@ -179,6 +186,9 @@ if [[ ! -f "${ARKIME_CONFIG_FILE}" ]] && [[ -r "${ARKIME_DIR}"/etc/config.orig.i
         sed -i "s/^\(wisePort=\)/# \1/" "${ARKIME_CONFIG_FILE}"
         sed -i "s/^\(viewerPlugins=\)/# \1/" "${ARKIME_CONFIG_FILE}"
         sed -i '/^\[custom-fields\]/,$d' "${ARKIME_CONFIG_FILE}"
+    else
+    # comment-out features that are unused in malcolm non-live mode
+      sed -i "s/^\(wiseURL=\)/# \1/" "${ARKIME_CONFIG_FILE}"
     fi
 
     # enable ja4+ plugin if it's present
@@ -199,6 +209,27 @@ if [[ ! -f "${ARKIME_CONFIG_FILE}" ]] && [[ -r "${ARKIME_DIR}"/etc/config.orig.i
     chmod 600 "${ARKIME_CONFIG_FILE}" || true
     [[ -n ${PUID} ]] && chown -f ${PUID} "${ARKIME_CONFIG_FILE}" || true
     [[ -n ${PGID} ]] && chown -f :${PGID} "${ARKIME_CONFIG_FILE}" || true
+fi 
+
+
+# An example wise.ini file is baked into the container image by the Dockerfile as $ARKIME_DIR/etc/wise.ini.example
+# After the container is booted we copy wise.ini.example from $ARMIKE_DIR/etc/ to $ARKIME_DIR/wiseini/
+# if $ARKIME_DIR/wiseini/wise.ini does not already exist.
+# $ARKIME_DIR/wiseini/wise.ini will either be a R/W mounted file, when run under Docker Compose or
+# $ARKIME_DIR/wiseini/ will be a persistent volume when run under Kubernetes.
+# This allows changes to persist when the wise application edits its own ini file at runtime.
+if [[ ! -f "${ARKIME_WISE_CONFIG_FILE}" ]] && [[ -r "${ARKIME_WISE_EXAMPLE_FILE}" ]]  && [[ "$LIVE_CAPTURE" == "false" ]] && [[ "$MALCOLM_PROFILE" == "malcolm" ]]; then
+    cp "${ARKIME_WISE_EXAMPLE_FILE}" "${ARKIME_WISE_CONFIG_FILE}"
+    chown -fR "$PUSER":"$PUSER" "${ARKIME_DIR}"/wiseini
+fi
+
+if [[ ${ARKIME_EXPOSE_WISE_GUI}  == "true" ]] && [[ "$LIVE_CAPTURE" == "false" ]] && [[ "$MALCOLM_PROFILE" == "malcolm" ]]; then
+  sed -i "s|^\(elasticsearch=\).*|\1"${OPENSEARCH_URL_FINAL}"|" "${ARKIME_WISE_CONFIG_FILE}"
+  sed -i "s|^\(wiseHost=\).*|\1""0.0.0.0""|" "${ARKIME_WISE_CONFIG_FILE}"
+  if [[ ${ARKIME_ALLOW_WISE_GUI_CONFIG}  == "true" ]]; then
+    sed -i "s|^\(usersElasticsearch=\).*|\1"${OPENSEARCH_URL_FINAL}"|" "${ARKIME_WISE_CONFIG_FILE}"
+    sed -i "s|^\(\s*\$ARKIME_DIR\/bin\/node wiseService.js\).*|\1 --webcode "${ARKIME_WISE_CONFIG_PIN_CODE}" --webconfig --insecure -c \$ARKIME_DIR/wiseetc/wise.ini|" "${ARKIME_WISE_SERVICE_SCRIPT}"
+  fi
 fi
 
 unset OPENSEARCH_URL_FINAL
